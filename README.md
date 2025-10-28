@@ -26,4 +26,12 @@ Pixels are colored based on the color of the original image at the center of eac
 ## Support
 
 If you find this project useful, you can support it here:  
-[![Buy Me A Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/morejpeg)
+<a href="https://www.buymeacoffee.com/morejpeg" target="_blank">
+  <img 
+    src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
+    alt="Buy Me A Coffee" 
+    width="85" 
+    height="23" 
+    style="max-width:100%; height:auto;"
+  />
+</a>
