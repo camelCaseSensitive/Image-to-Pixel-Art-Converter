@@ -7,10 +7,9 @@
 
 ## About
 
-**Image To Pixel Art** is a simple browser-based tool that converts an image into pixel art using an adjustable grid.  
-You can set how many pixels wide the image should be, and the script automatically adjusts the height to match.  
-Each square is colored based on the original image, and you can click on any square to reselect its color from the source image.  
-The final result can be saved as a PNG.
+A simple browser-based tool that converts an image into pixel art using an adjustable grid.  
+You can set how many pixels wide the pixel art should be, and the script automatically adjusts the height to match.  
+Pixels are colored based on the color of the original image at the center of each square, but you can click on any square to change the color sampling point within eachh square.  
 
 ---
 
@@ -19,7 +18,7 @@ The final result can be saved as a PNG.
 1. Open the app on [GitHub Pages](https://camelcasesensitive.github.io/Image-To-Pixel-Art/).  
 2. Drag and drop or upload an image.  
 3. Adjust the **Pixels Across** value to change pixel size.  
-4. Optionally click on squares to fine-tune colors.  
+4. Click the squares to fine-tune colors.  
 5. Click **Save** to download your pixel art.
 
 ---
