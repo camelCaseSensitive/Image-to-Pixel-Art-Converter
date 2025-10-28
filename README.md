@@ -1,6 +1,6 @@
 # Image To Pixel Art
 
-[![Image To Pixel Art Example](./Example.jpg "Image To Pixel Art")](https://camelcasesensitive.github.io/Image-To-Pixel-Art/)
+[![Image To Pixel Art Example](./ImageToPixelArt.png "Image To Pixel Art")](https://camelcasesensitive.github.io/Image-To-Pixel-Art/)
 > Click the image above to try it live on GitHub Pages.
 
 ---
