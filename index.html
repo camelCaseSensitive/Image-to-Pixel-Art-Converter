@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Image To Pixel Art</title>
+  
+<style>
+  :root {
+    --bg: #0f1220;
+    --panel: #171a2b;
+    --text: #e9ecf1;
+    --accent: #7aa2ff;
+    --muted: #9aa3b2;
+    --border: #2a2f44;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    min-height: 100vh;
+    flex-direction: column;
+    align-items: center;
+  }
+  h1 {
+    margin: 24px 16px 8px;
+    font-size: clamp(22px, 3.2vw, 34px);
+    letter-spacing: 0.2px;
+  }
+  .ui {
+    width: min(1200px, 94vw);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 12px;
+    align-items: center;
+  }
+  .drop {
+    grid-column: 1 / -1;
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    text-align: center;
+    color: var(--muted);
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .drop.dragover {
+    border-color: var(--accent);
+    background: rgba(122, 162, 255, 0.06);
+  }
+  .row {
+    display: contents;
+  }
+  .field {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  label {
+    color: var(--muted);
+  }
+  input[type="number"] {
+    width: 120px;
+    padding: 8px 10px;
+    background: #111423;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  button {
+    padding: 10px 14px;
+    background: var(--accent);
+    color: #0b1020;
+    border: 0;
+    border-radius: 8px;
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .hint {
+    grid-column: 1 / -1;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .stage-wrap {
+    width: 100%;
+    display: grid;
+    place-items: center;
+    padding: 16px 0 32px;
+  }
+  canvas {
+    max-width: min(1200px, 94vw);
+    height: auto;
+    image-rendering: pixelated;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.25);
+    background: #000;
+  }
+  .badge {
+    display:inline-block;
+    font-size:12px;
+    padding:2px 8px;
+    border:1px solid var(--border);
+    border-radius:999px;
+    color:var(--muted);
+    margin-left:8px;
+  }
+  footer {
+    margin-top: auto;                /* pushes footer to the bottom */
+    padding: 12px 0;
+    text-align: center;
+  }
+
+  footer img {
+    transition: transform 0.2s ease;
+  }
+
+  footer img:hover {
+    transform: scale(1.05);
+  }
+</style>
+</head>
+<body>
+
+<h1>Image To Pixel Art <span id="status" class="badge">No image</span></h1>
+
+<section class="ui">
+  <div id="drop" class="drop">
+    <strong>Drag & Drop</strong> an image here, or <u>click to choose</u>.
+    <input id="fileInput" type="file" accept="image/*" hidden />
+  </div>
+
+  <div class="row">
+    <div class="field">
+      <label for="cols">Pixels Across</label>
+      <input id="cols" type="number" min="1" step="1" value="48" />
+    </div>
+    <div class="field">
+      <button id="saveBtn" disabled>Save</button>
+    </div>
+  </div>
+
+  <div class="hint">
+    • Click a colored square to hide it (enter pick-mode). Click again <em>inside the same square</em> to choose a new color from the underlying image.<br/>
+    • Press <kbd>Esc</kbd> to cancel pick-mode.
+  </div>
+</section>
+
+<section class="stage-wrap">
+  <canvas id="canvas"></canvas>
+</section>
+
+<script>
+(() => {
+  const drop = document.getElementById('drop');
+  const fileInput = document.getElementById('fileInput');
+  const colsInput = document.getElementById('cols');
+  const saveBtn = document.getElementById('saveBtn');
+  const statusBadge = document.getElementById('status');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  let img = null, imgW = 0, imgH = 0;
+  let cols = parseInt(colsInput.value, 10) || 48;
+  let tile = 0, rows = 0;
+  let grid = [];
+  let picking = null;
+
+  // --- New: separate offscreen canvas for sampling from the original image ---
+  const off = document.createElement('canvas');
+  const octx = off.getContext('2d', { willReadFrequently: true });
+
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const setStatus = (t) => statusBadge.textContent = t;
+
+  function loadImageFromFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = reject;
+        image.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleFiles(files) {
+    if (!files || !files.length) return;
+    const image = await loadImageFromFile(files[0]);
+    img = image;
+    imgW = image.naturalWidth;
+    imgH = image.naturalHeight;
+    canvas.width = imgW; canvas.height = imgH;
+    off.width = imgW; off.height = imgH;
+    octx.drawImage(img, 0, 0, imgW, imgH);
+    setStatus(`${imgW}×${imgH}px loaded`);
+    saveBtn.disabled = false;
+    cols = parseInt(colsInput.value, 10) || 48;
+    rebuildGrid();
+    drawAll();
+  }
+
+  function rebuildGrid() {
+    if (!img) return;
+    tile = imgW / cols;
+    rows = Math.ceil(imgH / tile);
+    grid = Array.from({length: rows}, (_, r) =>
+      Array.from({length: cols}, (_, c) => sampleTileCenter(c, r))
+    );
+    picking = null;
+  }
+
+  function sampleTileCenter(ci, ri) {
+    const cx = clamp(Math.floor((ci + 0.5) * tile), 0, imgW - 1);
+    const cy = clamp(Math.floor((ri + 0.5) * tile), 0, imgH - 1);
+    return sampleAtImagePixel(cx, cy);
+  }
+
+  function sampleAtImagePixel(px, py) {
+    const d = octx.getImageData(px, py, 1, 1).data;
+    return { r: d[0], g: d[1], b: d[2], a: d[3] };
+  }
+
+  function drawAll() {
+    if (!img) { ctx.clearRect(0,0,canvas.width,canvas.height); return; }
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(img, 0, 0, imgW, imgH);
+    ctx.save(); ctx.beginPath(); ctx.rect(0,0,imgW,imgH); ctx.clip();
+    for (let r=0;r<rows;r++){
+      for (let c=0;c<cols;c++){
+        const color=grid[r][c];
+        const x=c*tile, y=r*tile, size=Math.ceil(tile);
+        if(color){
+          ctx.fillStyle=`rgba(${color.r},${color.g},${color.b},${(color.a??255)/255})`;
+          ctx.fillRect(x,y,size,size);
+        } else {
+          ctx.strokeStyle='rgba(122,162,255,0.8)';
+          ctx.lineWidth=1.5; ctx.strokeRect(x+0.75,y+0.75,size-1.5,size-1.5);
+        }
+      }
+    }
+    ctx.restore();
+    if(picking){
+      const {ci,ri}=picking, x=ci*tile, y=ri*tile, size=Math.ceil(tile);
+      ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.9)';
+      ctx.setLineDash([6,4]); ctx.lineWidth=2;
+      ctx.strokeRect(x+1,y+1,size-2,size-2); ctx.restore();
+    }
+  }
+
+  function pointToTile(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = (clientX - rect.left) * scaleX;
+    const y = (clientY - rect.top) * scaleY;
+    if (x<0||y<0||x>=imgW||y>=imgH) return null;
+    return { ci: Math.floor(x / tile), ri: Math.floor(y / tile), x, y };
+  }
+
+  function onCanvasClick(e) {
+    if (!img) return;
+    const p = pointToTile(e.clientX, e.clientY);
+    if (!p) return;
+
+    if (picking) {
+      if (p.ci === picking.ci && p.ri === picking.ri) {
+        // second click = pick color
+        grid[p.ri][p.ci] = sampleAtImagePixel(Math.floor(p.x), Math.floor(p.y));
+        picking = null;
+      } else {
+        // clicked different tile → switch pick mode
+        const old = picking; 
+        if (old) grid[old.ri][old.ci] = sampleTileCenter(old.ci, old.ri);
+        grid[p.ri][p.ci] = null;
+        picking = { ci: p.ci, ri: p.ri };
+      }
+    } else {
+      // start pick mode
+      grid[p.ri][p.ci] = null;
+      picking = { ci: p.ci, ri: p.ri };
+    }
+    drawAll();
+  }
+
+  function onColsChange() {
+    const v = parseInt(colsInput.value,10);
+    if(!Number.isFinite(v)||v<1)return;
+    cols=v; rebuildGrid(); drawAll();
+  }
+
+  function onEscCancel(e){
+    if(e.key==='Escape'&&picking){
+      grid[picking.ri][picking.ci]=sampleTileCenter(picking.ci,picking.ri);
+      picking=null; drawAll();
+    }
+  }
+
+  function saveImage(){
+    const url=canvas.toDataURL('image/png');
+    const a=document.createElement('a'); a.href=url; a.download='pixel-art.png'; a.click();
+  }
+
+  // Events
+  drop.addEventListener('click',()=>fileInput.click());
+  drop.addEventListener('dragover',(e)=>{e.preventDefault();drop.classList.add('dragover');});
+  drop.addEventListener('dragleave',()=>drop.classList.remove('dragover'));
+  drop.addEventListener('drop',(e)=>{e.preventDefault();drop.classList.remove('dragover');handleFiles(e.dataTransfer.files);});
+  fileInput.addEventListener('change',(e)=>handleFiles(e.target.files));
+  colsInput.addEventListener('input',onColsChange);
+  saveBtn.addEventListener('click',saveImage);
+  canvas.addEventListener('click',onCanvasClick);
+  window.addEventListener('keydown',onEscCancel);
+  setStatus('No image');
+})();
+
+</script>
+
+</body>
+<footer>
+  <a href="https://www.buymeacoffee.com/morejpeg" target="_blank">
+    <img
+      src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+      alt="Buy Me A Coffee"
+      height="45"
+      width="170"
+    >
+  </a>
+</footer>
+</html>
