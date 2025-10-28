@@ -30,8 +30,8 @@ If you find this project useful, you can support it here:
   <img 
     src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
     alt="Buy Me A Coffee" 
-    width="185" 
-    height="23" 
+    width="85*2" 
+    height="23*2" 
     style="max-width:100%; height:auto;"
   />
 </a>
