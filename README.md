@@ -22,16 +22,3 @@ Pixels are colored based on the color of the original image at the center of eac
 5. Click **Save** to download your pixel art.
 
 ---
-
-## Support
-
-If you find this project useful, you can support it here:  
-<a href="https://www.buymeacoffee.com/morejpeg" target="_blank">
-  <img 
-    src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
-    alt="Buy Me A Coffee" 
-    width="170" 
-    height="46" 
-    style="max-width:100%; height:auto;"
-  />
-</a>
