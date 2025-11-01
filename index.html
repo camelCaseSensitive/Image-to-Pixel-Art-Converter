@@ -37,7 +37,7 @@
     border-radius: 12px;
     padding: 16px;
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: 1fr repeat(5, auto);
     gap: 12px;
     align-items: center;
   }
@@ -55,17 +55,13 @@
     border-color: var(--accent);
     background: rgba(122, 162, 255, 0.06);
   }
-  .row {
-    display: contents;
-  }
   .field {
     display: flex;
     gap: 8px;
     align-items: center;
+    white-space: nowrap;
   }
-  label {
-    color: var(--muted);
-  }
+  label { color: var(--muted); }
   input[type="number"] {
     width: 120px;
     padding: 8px 10px;
@@ -85,10 +81,8 @@
     cursor: pointer;
     font-size: 14px;
   }
-  button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
   .hint {
     grid-column: 1 / -1;
     font-size: 13px;
@@ -98,7 +92,7 @@
     width: 100%;
     display: grid;
     place-items: center;
-    padding: 16px 0 32px;
+    padding: 12px 0 8px;
   }
   canvas {
     max-width: min(1200px, 94vw);
@@ -117,18 +111,42 @@
     color:var(--muted);
     margin-left:8px;
   }
-  footer {
-    margin-top: auto;                /* pushes footer to the bottom */
-    padding: 12px 0;
-    text-align: center;
-  }
 
-  footer img {
-    transition: transform 0.2s ease;
+  /* Palette row */
+  .palette {
+    width: min(1200px, 94vw);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 6px 2px 18px;
+    align-items: center;
   }
-
-  footer img:hover {
-    transform: scale(1.05);
+  .swatch {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    position: relative;
+  }
+  .swatch.selected {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .swatch::after {
+    content: attr(data-hex);
+    position: absolute;
+    bottom: -18px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .paint-indicator {
+    font-size: 12px;
+    color: var(--muted);
+    margin-left: 8px;
   }
 </style>
 </head>
@@ -142,21 +160,38 @@
     <input id="fileInput" type="file" accept="image/*" hidden />
   </div>
 
-  <div class="row">
-    <div class="field">
-      <label for="cols">Pixels Across</label>
-      <input id="cols" type="number" min="1" step="1" value="48" />
-    </div>
-    <div class="field">
-      <button id="saveBtn" disabled>Save</button>
-    </div>
+  <div class="field">
+    <label for="cols">Pixels Across</label>
+    <input id="cols" type="number" min="1" step="1" value="48" />
+  </div>
+
+  <div class="field">
+    <label for="numColors">Number of Colors</label>
+    <input id="numColors" type="number" min="2" step="1" value="8" />
+  </div>
+
+  <div class="field">
+    <label for="tolerance">Tolerance</label>
+    <input id="tolerance" type="number" min="1" step="1" value="25" />
+  </div>
+
+  <div class="field">
+    <button id="quantBtn" disabled>Quantize Colors</button>
+  </div>
+
+  <div class="field">
+    <button id="saveBtn" disabled>Save</button>
   </div>
 
   <div class="hint">
-    • Click a colored square to hide it (enter pick-mode). Click again <em>inside the same square</em> to choose a new color from the underlying image.<br/>
-    • Press <kbd>Esc</kbd> to cancel pick-mode.
+    • Click a colored square to hide it (enter pick-mode). Click again <em>inside the same square</em> to choose a new color from the underlying image.  
+    • Click another square to switch pick-mode. Press <kbd>Esc</kbd> to cancel pick or paint mode.  
+    • Set <em>Number of Colors</em> + <em>Tolerance</em> then click <em>Quantize Colors</em>.  
+    • Click a palette swatch to enter <em>paint mode</em>, then click tiles to paint with that color.
   </div>
 </section>
+
+<div id="palette" class="palette" aria-label="Palette Swatches"></div>
 
 <section class="stage-wrap">
   <canvas id="canvas"></canvas>
@@ -167,23 +202,94 @@
   const drop = document.getElementById('drop');
   const fileInput = document.getElementById('fileInput');
   const colsInput = document.getElementById('cols');
+  const numColorsInput = document.getElementById('numColors');
+  const tolInput = document.getElementById('tolerance');
+  const quantBtn = document.getElementById('quantBtn');
   const saveBtn = document.getElementById('saveBtn');
   const statusBadge = document.getElementById('status');
+  const paletteRow = document.getElementById('palette');
+
   const canvas = document.getElementById('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
   let img = null, imgW = 0, imgH = 0;
   let cols = parseInt(colsInput.value, 10) || 48;
   let tile = 0, rows = 0;
-  let grid = [];
-  let picking = null;
 
-  // --- New: separate offscreen canvas for sampling from the original image ---
+  // grid[r][c] = {r,g,b,a, manual?: true} or null while picking
+  let grid = [];
+  let picking = null;     // {ci, ri} or null
+  let palette = null;     // array of {r,g,b,hex,lum}
+  let paintColor = null;  // {r,g,b,hex,lum} when painting via palette
+
+  // Offscreen canvas for sampling original image
   const off = document.createElement('canvas');
   const octx = off.getContext('2d', { willReadFrequently: true });
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const setStatus = (t) => statusBadge.textContent = t;
+
+  function rgbToHex(r,g,b){
+    const toHex = (x)=>x.toString(16).padStart(2,'0');
+    return '#'+toHex(r)+toHex(g)+toHex(b);
+  }
+  function distanceSq(a,b){
+    const dr=a.r-b.r, dg=a.g-b.g, db=a.b-b.b;
+    return dr*dr+dg*dg+db*db;
+  }
+  function nearestPaletteColor(color){
+    if (!palette || !palette.length) return color;
+    let best = palette[0], bd = distanceSq(color, palette[0]);
+    for (let i=1;i<palette.length;i++){
+      const d = distanceSq(color, palette[i]);
+      if (d < bd) { bd = d; best = palette[i]; }
+    }
+    return { r: best.r, g: best.g, b: best.b, a: color.a ?? 255 };
+  }
+
+  function renderPaletteSwatches(){
+    paletteRow.innerHTML = '';
+    if (!palette || !palette.length) return;
+
+    // Label (paint mode indicator)
+    const label = document.createElement('div');
+    label.textContent = paintColor ? `Paint mode: ${paintColor.hex}` : 'Palette';
+    label.className = 'paint-indicator';
+    paletteRow.appendChild(label);
+
+    // Swatches
+    palette.forEach((p, idx) => {
+      const div = document.createElement('div');
+      div.className = 'swatch';
+      div.title = p.hex;
+      div.dataset.hex = p.hex;
+      div.style.background = p.hex;
+      if (paintColor && paintColor.hex === p.hex) div.classList.add('selected');
+
+      div.addEventListener('click', () => {
+        // toggle paint mode on this swatch
+        if (paintColor && paintColor.hex === p.hex) {
+          paintColor = null;
+        } else {
+          paintColor = p;
+          picking = null; // exit pick-mode if active
+        }
+        renderPaletteSwatches();
+      });
+
+      paletteRow.appendChild(div);
+    });
+
+    // Clear button for paint mode
+    const clear = document.createElement('button');
+    clear.textContent = 'Exit Paint Mode';
+    clear.style.marginLeft = '8px';
+    clear.addEventListener('click', () => {
+      paintColor = null;
+      renderPaletteSwatches();
+    });
+    paletteRow.appendChild(clear);
+  }
 
   function loadImageFromFile(file) {
     return new Promise((resolve, reject) => {
@@ -204,23 +310,43 @@
     img = image;
     imgW = image.naturalWidth;
     imgH = image.naturalHeight;
+
     canvas.width = imgW; canvas.height = imgH;
     off.width = imgW; off.height = imgH;
     octx.drawImage(img, 0, 0, imgW, imgH);
+
     setStatus(`${imgW}×${imgH}px loaded`);
     saveBtn.disabled = false;
+    quantBtn.disabled = false;
+    palette = null; paintColor = null; // reset
+    renderPaletteSwatches();
+
     cols = parseInt(colsInput.value, 10) || 48;
-    rebuildGrid();
+    rebuildGrid(false);
     drawAll();
   }
 
-  function rebuildGrid() {
+  function rebuildGrid(preserveManual) {
     if (!img) return;
     tile = imgW / cols;
     rows = Math.ceil(imgH / tile);
-    grid = Array.from({length: rows}, (_, r) =>
-      Array.from({length: cols}, (_, c) => sampleTileCenter(c, r))
-    );
+
+    const newGrid = new Array(rows);
+    for (let r = 0; r < rows; r++) {
+      newGrid[r] = new Array(cols);
+      for (let c = 0; c < cols; c++) {
+        const keep = preserveManual && grid[r] && grid[r][c] && grid[r][c].manual;
+        if (keep) {
+          // keep manual user color
+          const prev = grid[r][c];
+          newGrid[r][c] = { r: prev.r, g: prev.g, b: prev.b, a: prev.a ?? 255, manual: true };
+        } else {
+          // resample from original at tile center
+          newGrid[r][c] = sampleTileCenter(c, r);
+        }
+      }
+    }
+    grid = newGrid;
     picking = null;
   }
 
@@ -229,7 +355,6 @@
     const cy = clamp(Math.floor((ri + 0.5) * tile), 0, imgH - 1);
     return sampleAtImagePixel(cx, cy);
   }
-
   function sampleAtImagePixel(px, py) {
     const d = octx.getImageData(px, py, 1, 1).data;
     return { r: d[0], g: d[1], b: d[2], a: d[3] };
@@ -240,6 +365,7 @@
     ctx.clearRect(0,0,canvas.width,canvas.height);
     ctx.drawImage(img, 0, 0, imgW, imgH);
     ctx.save(); ctx.beginPath(); ctx.rect(0,0,imgW,imgH); ctx.clip();
+
     for (let r=0;r<rows;r++){
       for (let c=0;c<cols;c++){
         const color=grid[r][c];
@@ -254,6 +380,7 @@
       }
     }
     ctx.restore();
+
     if(picking){
       const {ci,ri}=picking, x=ci*tile, y=ri*tile, size=Math.ceil(tile);
       ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.9)';
@@ -277,20 +404,32 @@
     const p = pointToTile(e.clientX, e.clientY);
     if (!p) return;
 
+    // If painting with a palette swatch, paint immediately
+    if (paintColor) {
+      grid[p.ri][p.ci] = { r: paintColor.r, g: paintColor.g, b: paintColor.b, a: 255, manual: true };
+      picking = null; // exit any pick-mode
+      drawAll();
+      return;
+    }
+
     if (picking) {
       if (p.ci === picking.ci && p.ri === picking.ri) {
-        // second click = pick color
-        grid[p.ri][p.ci] = sampleAtImagePixel(Math.floor(p.x), Math.floor(p.y));
+        // pick from original image at click
+        let chosen = sampleAtImagePixel(Math.floor(p.x), Math.floor(p.y));
+        // snap to palette if it exists
+        if (palette && palette.length) chosen = nearestPaletteColor(chosen);
+        chosen.manual = true;
+        grid[p.ri][p.ci] = chosen;
         picking = null;
       } else {
-        // clicked different tile → switch pick mode
+        // switch pick-mode
         const old = picking; 
         if (old) grid[old.ri][old.ci] = sampleTileCenter(old.ci, old.ri);
         grid[p.ri][p.ci] = null;
         picking = { ci: p.ci, ri: p.ri };
       }
     } else {
-      // start pick mode
+      // start pick-mode
       grid[p.ri][p.ci] = null;
       picking = { ci: p.ci, ri: p.ri };
     }
@@ -300,13 +439,21 @@
   function onColsChange() {
     const v = parseInt(colsInput.value,10);
     if(!Number.isFinite(v)||v<1)return;
-    cols=v; rebuildGrid(); drawAll();
+    cols=v; rebuildGrid(false); drawAll();
+    // palette remains; grid resets to fresh center samples (manual edits cleared on pixel density change)
   }
 
   function onEscCancel(e){
-    if(e.key==='Escape'&&picking){
-      grid[picking.ri][picking.ci]=sampleTileCenter(picking.ci,picking.ri);
-      picking=null; drawAll();
+    if(e.key==='Escape'){
+      if (picking) {
+        grid[picking.ri][picking.ci]=sampleTileCenter(picking.ci,picking.ri);
+        picking=null;
+      }
+      if (paintColor) {
+        paintColor = null;
+        renderPaletteSwatches();
+      }
+      drawAll();
     }
   }
 
@@ -315,19 +462,111 @@
     const a=document.createElement('a'); a.href=url; a.download='pixel-art.png'; a.click();
   }
 
+  // ---- Quantization (cluster method adapted) ----
+  function clusterQuantizeFromGrid(maxColors, tolerance = 25){
+    // collect current grid colors (include manual edits; skip null tiles)
+    const cellColors = [];
+    for (let r=0;r<rows;r++){
+      for (let c=0;c<cols;c++){
+        const col = grid[r][c];
+        if (col) cellColors.push({ r: col.r, g: col.g, b: col.b });
+      }
+    }
+    // build clusters (deterministic)
+    const clusters = [];
+    for (const pix of cellColors) {
+      let found = false;
+      for (const cl of clusters) {
+        const dr = pix.r - cl.r, dg = pix.g - cl.g, db = pix.b - cl.b;
+        const dist = Math.sqrt(dr*dr + dg*dg + db*db);
+        if (dist < tolerance) {
+          cl.r = (cl.r * cl.count + pix.r) / (cl.count + 1);
+          cl.g = (cl.g * cl.count + pix.g) / (cl.count + 1);
+          cl.b = (cl.b * cl.count + pix.b) / (cl.count + 1);
+          cl.count++;
+          found = true;
+          break;
+        }
+      }
+      if (!found) clusters.push({ r: pix.r, g: pix.g, b: pix.b, count: 1 });
+    }
+    // merge to maxColors
+    function dist2(a,b){ const dr=a.r-b.r, dg=a.g-b.g, db=a.b-b.b; return dr*dr+dg*dg+db*db; }
+    while (clusters.length > maxColors) {
+      let minD = Infinity, ai = 0, bi = 1;
+      for (let i=0;i<clusters.length;i++){
+        for (let j=i+1;j<clusters.length;j++){
+          const d = dist2(clusters[i], clusters[j]);
+          if (d < minD) { minD = d; ai = i; bi = j; }
+        }
+      }
+      const a = clusters[ai], b = clusters[bi];
+      const total = a.count + b.count;
+      a.r = (a.r * a.count + b.r * b.count) / total;
+      a.g = (a.g * a.count + b.g * b.count) / total;
+      a.b = (a.b * a.count + b.b * b.count) / total;
+      a.count = total;
+      clusters.splice(bi, 1);
+    }
+    // palette sorted by luminance
+    const pal = clusters.map(c=>{
+      const r=Math.round(c.r), g=Math.round(c.g), b=Math.round(c.b);
+      const hex = rgbToHex(r,g,b);
+      const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      return { r, g, b, hex, lum };
+    }).sort((a,b)=>a.lum - b.lum);
+
+    return pal;
+  }
+
+  function applyPaletteToGrid(){
+    // replace each tile color with nearest palette color (preserve manual flags)
+    for (let r=0;r<rows;r++){
+      for (let c=0;c<cols;c++){
+        const col = grid[r][c];
+        if (!col) continue;
+        const wasManual = !!col.manual;
+        const snapped = nearestPaletteColor(col);
+        if (wasManual) snapped.manual = true;
+        grid[r][c] = snapped;
+      }
+    }
+  }
+
+  function onQuantize(){
+    if (!img) return;
+    const k = Math.max(2, parseInt(numColorsInput.value,10) || 8);
+    const tol = Math.max(1, parseInt(tolInput.value,10) || 25);
+
+    // 1) Rebuild from original, preserving manual edits
+    rebuildGrid(true);
+
+    // 2) Build palette using all current tile colors (including manual)
+    palette = clusterQuantizeFromGrid(k, tol);
+
+    // 3) Snap all tiles to nearest palette color
+    applyPaletteToGrid();
+
+    // 4) Update palette UI & redraw
+    renderPaletteSwatches();
+    drawAll();
+  }
+
   // Events
   drop.addEventListener('click',()=>fileInput.click());
   drop.addEventListener('dragover',(e)=>{e.preventDefault();drop.classList.add('dragover');});
   drop.addEventListener('dragleave',()=>drop.classList.remove('dragover'));
   drop.addEventListener('drop',(e)=>{e.preventDefault();drop.classList.remove('dragover');handleFiles(e.dataTransfer.files);});
   fileInput.addEventListener('change',(e)=>handleFiles(e.target.files));
-  colsInput.addEventListener('input',onColsChange);
-  saveBtn.addEventListener('click',saveImage);
-  canvas.addEventListener('click',onCanvasClick);
-  window.addEventListener('keydown',onEscCancel);
+
+  colsInput.addEventListener('input', onColsChange);
+  quantBtn.addEventListener('click', onQuantize);
+  saveBtn.addEventListener('click', saveImage);
+  canvas.addEventListener('click', onCanvasClick);
+  window.addEventListener('keydown', onEscCancel);
+
   setStatus('No image');
 })();
-
 </script>
 
 </body>
